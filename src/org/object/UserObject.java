@@ -1,6 +1,7 @@
 package org.object;
 
 import java.util.HashMap;
+import java.util.Set;
 
 public class UserObject {
 	/**
@@ -64,5 +65,13 @@ public class UserObject {
 		this.location = location;
 		this.isKnownLocation = isKnownLocation;
 		this.checkinMap = checkinMap;
+	}
+	
+	/**
+	 * 
+	 * @return the set of venue id where user has done check-in
+	 */
+	public Set<String> getAllVenues() {
+		return checkinMap.keySet();
 	}
 }
