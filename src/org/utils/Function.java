@@ -16,6 +16,12 @@ public class Function {
 		return result;
 	}
 	
+	/**
+	 * taking differentiation of Sigmoid function at one point.
+	 * Should be careful if the parameter is -x
+	 * @param x
+	 * @return
+	 */
 	public static double diffSigmoidFunction(double x) {
 		double s = sigmoidFunction(x);
 		return s * ( 1 - s );
@@ -25,6 +31,12 @@ public class Function {
 		return standardGau.density(x);
 	}
 	
+	/**
+	 * taking differentiation of cdf of standard Gaussian distribution
+ 	 * Should be careful if the parameter is -x
+	 * @param x	
+	 * @return
+	 */
 	public static double diffCDF(double x) {
 		return standardGau.density(x) / standardGau.cumulativeProbability(x);
 	}
