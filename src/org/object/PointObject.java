@@ -25,6 +25,22 @@ public class PointObject {
 		this.lat = lat;
 		this.lng = lng;
 	}
+	
+	/**
+	 * constructor from string
+	 * @param s
+	 */
+	public PointObject(String s) {
+		if (s.equals("?")) {
+			// if location is unknown, assign 
+			this.lat = 10.804200;
+			this.lng = 106.695736;
+		} else {
+			String[] comp = s.split(",");
+			this.lat = Double.parseDouble(comp[0]);
+			this.lng = Double.parseDouble(comp[1]);
+		}
+	}
 
 	/**
 	 * get latitude of point
