@@ -57,4 +57,36 @@ public class Utils {
 		
 		return result;
 	}
+	
+	/**
+	 * Round up number up to the places-th behind the point
+	 * For example, 11.56 => 11.6
+	 * @param value		value we want to round up
+	 * @param places	location behind the point that we want to round up
+	 * @return			round up value
+	 */
+	public static double roundUp(double value, int places) {
+	    if (places < 0) throw new IllegalArgumentException();
+
+	    double factor = Math.pow(10, places);
+	    value = value * factor;
+	    double tmp = Math.ceil(value);
+	    return tmp / factor;
+	}
+	
+	/**
+	 * Round down number up to the places-th behind the point
+	 * Eg: 11.56 => 11.5
+	 * @param value		value we want to round down
+	 * @param places	location behind the point that we want to round down
+	 * @return
+	 */
+	public static double roundDown(double value, int places){
+		if (places < 0) throw new IllegalArgumentException();
+
+	    double factor = Math.pow(10, places);
+	    value = value * factor;
+	    double tmp = Math.floor(value);
+	    return tmp / factor;
+	}
 }
