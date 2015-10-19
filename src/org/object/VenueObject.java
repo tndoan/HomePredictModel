@@ -16,7 +16,15 @@ public class VenueObject {
 		this.neighbors = neighbors;
 		this.userIds = userIds;
 		this.totalCks = totalCks;
+		this.isSetArea = false;
 	}
+	
+	private boolean isSetArea;
+	
+	/**
+	 * indicate the area id that this venue is belong to
+	 */
+	private String areaId;
 	
 	/**
 	 * total number of check-in that it has
@@ -74,6 +82,23 @@ public class VenueObject {
 
 	public int getTotalCks() {
 		return totalCks;
+	}
+
+	public String getAreaId() {
+		return areaId;
+	}
+
+	/**
+	 * can set area id for venue one time. The second time will be ignored.
+	 * @param areaId
+	 */
+	public void setAreaId(String areaId) {
+		// if not set area, set it
+		// otherwise, ignore
+		if (this.isSetArea == false) {
+			this.areaId = areaId;
+			this.isSetArea = true;
+		}
 	}
 	
 }
