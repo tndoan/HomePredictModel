@@ -32,7 +32,9 @@ public class Loglikelihood {
 		for(String userId : userMap.keySet()) {
 			UserObject uo = userMap.get(userId);
 			for (String venueId : venueMap.keySet()) {
-				AreaObject ao = areaMap.get(venueId);
+				VenueObject vo = venueMap.get(venueId);
+				String areaId = vo.getAreaId();
+				AreaObject ao = areaMap.get(areaId);
 				
 				double distance = Distance.calSqEuDistance(uo.getLocation(), ao.getLocation());
 				
@@ -83,7 +85,7 @@ public class Loglikelihood {
 		double llh = 0;
 		
 		VenueObject vo = venueMap.get(venueId);
-		AreaObject ao = areaMap.get(venueId);
+		AreaObject ao = areaMap.get(vo.getAreaId());
 		
 		// calculate the first term
 		double tempSqScope = ao.getScope() * ao.getScope() - vo.getInfluenceScope() * vo.getInfluenceScope() + sigma_v * sigma_v;
@@ -101,7 +103,10 @@ public class Loglikelihood {
 		for (String nId : neighbors) { // loop over all neighbors of venue
 			VenueObject no = venueMap.get(nId);
 			ArrayList<String> nUsers = no.getUserIds();
-			AreaObject na = areaMap.get(nId); // na = neighbor area
+			if (nUsers == null) { // this neighbor does not have any visits from users
+				continue;
+			}
+			AreaObject na = areaMap.get(no.getAreaId()); // na = neighbor area
 			// do this because we want to use the new value of sigma_v; 
 			// vo contains the old one
 			double sqScope = na.getScope() * na.getScope() - vo.getInfluenceScope() * vo.getInfluenceScope() + sigma_v * sigma_v;
