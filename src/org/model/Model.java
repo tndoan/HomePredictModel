@@ -65,19 +65,17 @@ public class Model {
 		this.isSigmoid = isSigmoid;
 	}
 		
-	public Model(String venueLocFile, String userLocFile, String cksFile, String neighborFile, boolean isAverageLocation, boolean isSigmoid){
+	public Model(String venueLocFile, String userLocFile, String cksFile, boolean isAverageLocation, boolean isSigmoid, double scale){
 		this.isSigmoid = isSigmoid;
 		
 		// initialize 
 		venueMap = new HashMap<>();
 		userMap = new HashMap<>();
 		unknownLocUsers = new ArrayList<>();
-		areaMap = new HashMap<>();
 		
 		// read data from files
 		HashMap<String, String> vInfo = ReadFile.readLocation(venueLocFile);
 		HashMap<String, String> uInfo = ReadFile.readLocation(userLocFile);
-		HashMap<String, ArrayList<String>> neighbors = ReadFile.readNeighbors(neighborFile);
 		HashMap<String, HashMap<String, Integer>> cksMap = ReadFile.readNumCksFile(cksFile);
 		
 		HashMap<String, ArrayList<String>> userOfVenueMap = Utils.collectUsers(cksMap);
@@ -104,59 +102,11 @@ public class Model {
 		}
 		
 		HashMap<String, Integer> countMap = Utils.countCks(cksMap);
-		
-		// make venue objects
-		for (String venueId: vInfo.keySet()){
-			
-			//parse the location of venues
-			String locInfo = vInfo.get(venueId);
-			PointObject location = new PointObject(locInfo);
-			
-			ArrayList<String> neighborIds = neighbors.get(venueId);
-			
-			int numCks = countMap.get(venueId);
-			
-			ArrayList<String> listOfUsers = userOfVenueMap.get(venueId);
-			
-			VenueObject vo = new VenueObject(venueId, numCks, location, neighborIds, listOfUsers);
-			
-			venueMap.put(venueId, vo);
-		}
-		
-		// make area objects
-		for (String venueId : vInfo.keySet()) {
-			VenueObject vo = venueMap.get(venueId);
-			ArrayList<String> venueIds = vo.getNeighbors();
-			
-			double lat = vo.getLocation().getLat();
-			double lng = vo.getLocation().getLng();
-			double scope = vo.getInfluenceScope() * vo.getInfluenceScope();
-			
-			if (isAverageLocation) {
-				for (String vId : venueIds){
-					VenueObject v = venueMap.get(vId);
-					lat += v.getLocation().getLat();
-					lng += v.getLocation().getLng();
-					scope += v.getInfluenceScope() * v.getInfluenceScope();
-				}
-				lat /= (double) (venueIds.size() + 1);
-				lng /= (double) (venueIds.size() + 1);
-			} else {
-				for (String vId : venueIds){
-					VenueObject v = venueMap.get(vId);
-					scope += v.getInfluenceScope() * v.getInfluenceScope();
-				}
-			}
-			
-			scope /= (double) (venueIds.size() + 1);
-			PointObject p = new PointObject(lat, lng);
-			AreaObject a = new AreaObject(venueId, Math.sqrt(scope), p);
-			areaMap.put(venueId, a);
-		}
+
+		areaMap = new HashMap<>();
+		venueMap = Utils.createNeighborsBox(vInfo, areaMap, countMap, userOfVenueMap, scale);
 	}
 	
-
-
 	
 	public ArrayList<String> getUnknownLocUsers() {
 		return unknownLocUsers;
@@ -185,20 +135,28 @@ public class Model {
 			HashMap<String, Double> updatedScope = new HashMap<>(); // the new scope of each venue
 			// step 1: calculate the scope of each venue and then put them to updatedScope
 			for (String venueId : venueMap.keySet()) {
-				double curScope = venueMap.get(venueId).getInfluenceScope();
+				VenueObject vo = venueMap.get(venueId);
+				if (vo.getUserIds() == null) // this venue does not have any visits from users
+					continue;
+				double curScope = vo.getInfluenceScope();
+				System.out.println("------------");
 				double scope = maximizeScopeOfVenue(venueId, curScope);
+				System.out.println("------------");
 				updatedScope.put(venueId, scope);
 			}
 			// step 2: use new value to override old one
 			for (String venueId : venueMap.keySet()){
-				double scope = updatedScope.get(venueId);
 				VenueObject v = venueMap.get(venueId);
+				if (v.getUserIds() == null)
+					continue;
+				double scope = updatedScope.get(venueId);
 				v.updateInfluenceScope(scope);
 			}
+
+			llh = calculateLLH();
+			System.out.println("after update scope of venues:" + llh);
 			
 			// checking convergence
-			llh = calculateLLH();
-			System.out.println("after update scope of users:" + llh);
 			if (iteration > 0 && Math.abs(prev_llh - llh) < Params.threshold) {
 				conv = true;
 			}
@@ -221,7 +179,9 @@ public class Model {
 			double denominator = 0.0;
 			
 			for (String vId : venues) {
-				AreaObject ao = areaMap.get(vId);
+				VenueObject vo = venueMap.get(vId);
+				String areaId = vo.getAreaId();
+				AreaObject ao = areaMap.get(areaId);
 				double weight = ((double) uo.retrieveNumCks(vId)) / (ao.getScope() * ao.getScope()); 
 				numerator_x += weight * ao.getLocation().getLat();
 				numerator_y += weight * ao.getLocation().getLng();
@@ -235,6 +195,7 @@ public class Model {
 	public double maximizeScopeOfVenue(String venueId, double sigma_v) {
 		VenueObject vObj = venueMap.get(venueId);
 		ArrayList<String> neighbors = vObj.getNeighbors();
+		String areaId = vObj.getAreaId();
 
 		// \sigma_v is in all the area of their neighbors. so when we update sigma_v, the influence scope of areas which contain venue v are also
 		// needed to be updated. Key of this map is id of area, venue is the square influence scope which does not contain venue v. 
@@ -243,11 +204,12 @@ public class Model {
 //		double sqSigma_v = sigma_v * sigma_v;
 		double sqSigma_v = vObj.getInfluenceScope() * vObj.getInfluenceScope();
 		for (String n : neighbors) {
-			double currentScope = areaMap.get(n).getScope();
+			String nAreaId = venueMap.get(n).getAreaId();
+			double currentScope = areaMap.get(nAreaId).getScope();
 			double sqCurrentScope =  currentScope * currentScope;
 			areaSourdingMap.put(n, sqCurrentScope - sqSigma_v);
 		}
-		double tempSqCurrentScope = areaMap.get(venueId).getScope() * areaMap.get(venueId).getScope();
+		double tempSqCurrentScope = areaMap.get(areaId).getScope() * areaMap.get(areaId).getScope();
 		areaSourdingMap.put(venueId, tempSqCurrentScope - sqSigma_v);
 		
 		
@@ -286,6 +248,7 @@ public class Model {
 				
 				// checking the convergence rate
 				double llh = calculateLLH(venueId, sigma_v);
+				System.out.println(llh);
 				double obj = - t * llh - Math.log(sigma_v);
 //				System.out.println("pre_obj:" + preObj + " obj:" + obj + " sigma:" + sigma_v + " llh:" + (llh)+ " learningRate:" + learningRate);
 				if (iter > 1 && Math.abs(obj - preObj) < Params.threshold) {
@@ -295,12 +258,12 @@ public class Model {
 				iter++;
 			}
 //			System.out.println("===========");
-			if (1.0 / t < Params.threshold)
+//			if (1.0 / t < Params.threshold)
 				outter_conv = true;
-			else {
-				t = 2.0 * t;
-				inner_conv = false; // continue using stochastic gradient descent to find the maximum
-			}
+//			else {
+//				t = 2.0 * t;
+//				inner_conv = false; // continue using stochastic gradient descent to find the maximum
+//			}
 		}
 		
 		return sigma_v;
@@ -308,6 +271,7 @@ public class Model {
 	
 	public double grad(String venueId, double sigma_v, double t) {
 		VenueObject vObj = venueMap.get(venueId);
+		String areaId = vObj.getAreaId();
 		ArrayList<String> neighbors = vObj.getNeighbors();
 
 		// \sigma_v is in all the area of their neighbors. so when we update sigma_v, the influence scope of areas which contain venue v are also
@@ -316,11 +280,12 @@ public class Model {
 		
 		double sqSigma_v = vObj.getInfluenceScope() * vObj.getInfluenceScope();
 		for (String n : neighbors) {
-			double currentScope = areaMap.get(n).getScope();
+			VenueObject nObj = venueMap.get(n);
+			double currentScope = areaMap.get(nObj.getAreaId()).getScope();
 			double sqCurrentScope =  currentScope * currentScope;
 			areaSourdingMap.put(n, sqCurrentScope - sqSigma_v);
 		}
-		double tempSqCurrentScope = areaMap.get(venueId).getScope() * areaMap.get(venueId).getScope();
+		double tempSqCurrentScope = areaMap.get(areaId).getScope() * areaMap.get(areaId).getScope();
 		areaSourdingMap.put(venueId, tempSqCurrentScope - sqSigma_v);
 		
 		return grad(venueId, sigma_v, areaSourdingMap, t);
@@ -330,6 +295,7 @@ public class Model {
 		double grad = 0.0;
 		
 		VenueObject vObj = venueMap.get(venueId);
+		String areaId = vObj.getAreaId();
 		double w_v = vObj.getTotalCks();
 		ArrayList<String> neighbors = vObj.getNeighbors();
 		
@@ -337,19 +303,21 @@ public class Model {
 		for (String userId : users) {
 			UserObject uo = userMap.get(userId);
 			double w = uo.retrieveNumCks(venueId);
-			double d = Distance.calSqEuDistance(uo.getLocation(), areaMap.get(venueId).getLocation());
+			double d = Distance.calSqEuDistance(uo.getLocation(), areaMap.get(areaId).getLocation());
 			double sq_sigma_v_prime = areaSourdingMap.get(venueId) + sigma_v * sigma_v;
 			grad += w * (-2.0 * sigma_v / sq_sigma_v_prime + sigma_v * d / (sq_sigma_v_prime * sq_sigma_v_prime));
 		}
 		
 		for (String neighbor : neighbors){
 			VenueObject neighborObj = venueMap.get(neighbor);
-			AreaObject neighborAreaObj = areaMap.get(neighbor);
+			AreaObject neighborAreaObj = areaMap.get(neighborObj.getAreaId());
 			double w_n = neighborObj.getTotalCks();
 			
 			// second term of gradient
 			double sq_sigma_n_prime = areaSourdingMap.get(neighbor) + sigma_v * sigma_v;
 			ArrayList<String> uOfNeighbors = neighborObj.getUserIds();
+			if (uOfNeighbors == null) 
+				continue;
 			for (String u : uOfNeighbors) {
 				UserObject uo = userMap.get(u);
 				double w_in = uo.retrieveNumCks(neighbor);
@@ -392,11 +360,12 @@ public class Model {
 		vo.updateInfluenceScope(s);
 		ArrayList<String> neighbors = venueMap.get(vId).getNeighbors();
 		for (String neighbor : neighbors) {
-			AreaObject ao = areaMap.get(neighbor);
+			VenueObject nObj = venueMap.get(neighbor);
+			AreaObject ao = areaMap.get(nObj.getAreaId());
 			ao.updateScope(Math.sqrt(ao.getScope() * ao.getScope() - sqOldvalue + s * s));
 		}
 		
-		AreaObject ao = areaMap.get(vId);
+		AreaObject ao = areaMap.get(vo.getAreaId());
 		ao.updateScope(Math.sqrt(ao.getScope() * ao.getScope() - sqOldvalue + s * s));
 	}
 	
@@ -444,6 +413,12 @@ public class Model {
 		  // report
 		} finally {
 		   writer.close();
+		}
+	}
+	
+	public void printInfluenceScope() {
+		for (VenueObject v : venueMap.values()) {
+			System.out.println("venue id:\t" + v.getId() + "\tinfluence scope:" + v.getInfluenceScope());
 		}
 	}
 }
