@@ -27,10 +27,6 @@ public class Function {
 		return s * ( 1 - s );
 	}
 	
-	public static double GaussDesnsity(double x) {
-		return standardGau.density(x);
-	}
-	
 	/**
 	 * taking differentiation of cdf of standard Gaussian distribution
  	 * Should be careful if the parameter is -x
@@ -39,5 +35,14 @@ public class Function {
 	 */
 	public static double diffCDF(double x) {
 		return standardGau.density(x) / standardGau.cumulativeProbability(x);
+	}
+	
+	/**
+	 * return cumulative density function for a specific value
+	 * @param x	data point that we want to compute
+	 * @return
+	 */
+	public static double cdf(double x) {
+		return standardGau.cumulativeProbability(x);
 	}
 }
