@@ -157,7 +157,7 @@ public class Model {
 			System.out.println("after update scope of venues:" + llh);
 			
 			// checking convergence
-			if (iteration > 0 && Math.abs(prev_llh - llh) < Params.threshold) {
+			if (iteration > 0 && Math.abs((prev_llh - llh)/llh) < Params.threshold) {
 				conv = true;
 			}
 			
