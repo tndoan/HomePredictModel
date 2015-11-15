@@ -80,6 +80,12 @@ public class Model {
 		
 		HashMap<String, ArrayList<String>> userOfVenueMap = Utils.collectUsers(cksMap);
 		
+		HashMap<String, PointObject> vLocInfo = new HashMap<>();
+		for (String vId : vInfo.keySet()) {
+			PointObject p = new PointObject(vInfo.get(vId));
+			vLocInfo.put(vId, p);
+		}
+		
 		// making user objects
 		for(String userId : uInfo.keySet()){
 			
@@ -104,7 +110,7 @@ public class Model {
 		HashMap<String, Integer> countMap = Utils.countCks(cksMap);
 
 		areaMap = new HashMap<>();
-		venueMap = Utils.createNeighborsBox(vInfo, areaMap, countMap, userOfVenueMap, scale);
+		venueMap = Utils.createNeighborsBox(vLocInfo, areaMap, countMap, userOfVenueMap, scale);
 	}
 	
 	
@@ -420,5 +426,14 @@ public class Model {
 		for (VenueObject v : venueMap.values()) {
 			System.out.println("venue id:\t" + v.getId() + "\tinfluence scope:" + v.getInfluenceScope());
 		}
+	}
+
+	/**
+	 * 
+	 * @param userId
+	 * @return
+	 */
+	public PointObject getUserLoc(String userId) {
+		return userMap.get(userId).getLocation();
 	}
 }
