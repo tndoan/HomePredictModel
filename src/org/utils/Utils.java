@@ -179,13 +179,12 @@ public class Utils {
 	 * @param scale				size of the cell in degree
 	 * @return
 	 */
-	public static HashMap<String, VenueObject> createNeighborsBox(HashMap<String, String> vInfo, HashMap<String, AreaObject> areaMap, 
+	public static HashMap<String, VenueObject> createNeighborsBox(HashMap<String, PointObject> vInfo, HashMap<String, AreaObject> areaMap, 
 			HashMap<String, Integer> countMap, HashMap<String, ArrayList<String>> userOfVenueMap, double scale) {
-		Collection<String> c = vInfo.values();
-		ArrayList<String> locInfo = new ArrayList<>(c);
+		Collection<PointObject> locInfo = vInfo.values();
 		
 		// find venues inside area
-		RectangleObject coverRectangle = MakeAreaMap.surroundingGrid(locInfo);
+		RectangleObject coverRectangle = MakeAreaMap.surroundingGrid1(locInfo);
 //		double scale = 0.1; // the size of each square is 0.1 x 0.1 (latitude and longitude)
 		
 		PointObject ne = coverRectangle.getNortheast();
@@ -193,24 +192,24 @@ public class Utils {
 		
 		double base_min_lat = sw.getLat();
 		double base_min_lng = sw.getLng();
-		
-		int numLat = (int) (Math.abs(ne.getLat() - sw.getLat()) / scale);
-		int numLng = (int) (Math.abs(ne.getLng() - sw.getLng()) / scale);
+
+		int numLat = (int) Math.round(ne.getLat() / scale - sw.getLat() / scale);
+		int numLng = (int) Math.round(ne.getLng() / scale - sw.getLng() / scale);
 		
 		// I know it is not a good way to handle this case but maybe it works
 		// key is area id; value is set of venue id which is belong to this area
 		HashMap<String, Set<String>> venuesInArea = new HashMap<>();
 		
 		for (String vId : vInfo.keySet()) {
-			String vo = vInfo.get(vId);
-			PointObject loc = new PointObject(vo);
+			PointObject loc = vInfo.get(vId);
 			
 			// cell id of this venue
-			int i = (int) Math.ceil((loc.getLat() - base_min_lat) / scale);
-			int j = (int) Math.ceil((loc.getLng() - base_min_lng) / scale);
+			int i = (int) Math.floor((loc.getLat() - base_min_lat) / scale);
+			int j = (int) Math.floor((loc.getLng() - base_min_lng) / scale);
 			
 			// area id of venue. Each venue is belong to only 1 area.
-			String areaIds = String.valueOf(i * numLat + j);
+			String areaIds = String.valueOf(i * numLng  + j );
+//			System.out.println("venueId:" + vId + "\ti:" + i + "\tj:" + j + "\tareaId:" + areaIds);
 			
 			Set<String> listOfVenues = venuesInArea.get(areaIds);
 			if (listOfVenues == null) {
@@ -223,11 +222,15 @@ public class Utils {
 		// create area
 		for (int i = 0; i < numLat; i++) {
 			for (int j = 0; j < numLng; j++) {
-				String areaId = String.valueOf(i * numLat + j);
+				String areaId = String.valueOf(i * numLng + j);
 				PointObject sub_ne = new PointObject(base_min_lat + (scale * (double)(i + 1)), base_min_lng + (scale * (double) (j + 1)));
 				PointObject sub_sw = new PointObject(base_min_lat + (scale * (double)(i)), base_min_lng + (scale * (double) (j)));
 				RectangleObject rObj = new RectangleObject(sub_ne, sub_sw);
-				AreaObject area = new AreaObject(areaId, 0, rObj.getCenter(), venuesInArea.get(areaId));
+				
+				// calculate the scope value of area
+				double scope = 1.0;
+
+				AreaObject area = new AreaObject(areaId, scope, rObj.getCenter(), venuesInArea.get(areaId));
 				areaMap.put(areaId, area);
 			}
 		}
@@ -238,23 +241,30 @@ public class Utils {
 		// | 1 | 2 | 3 |
 		// | 4 | 5 | 6 |
 		// | 7 | 8 | 9 |
-		HashMap<String, ArrayList<String>> neighborMap = new HashMap<>(); // key is venue id, value is list of its neighbors
+		HashMap<String, ArrayList<String>> neighbors = new HashMap<>();
+		HashMap<String, String> areaIdOfVenue = new HashMap<>();
 		for (int i = 0; i < numLat; i++ ) {
 			for (int j = 0; j < numLng; j++) {
-				String areaId = String.valueOf(i * numLat + j);
+				String areaId = String.valueOf(i * numLng + j);
 								
 				Set<String> setOfVenues = venuesInArea.get(areaId);
-				for (String vId : setOfVenues) {
-					ArrayList<String> neighbors = new ArrayList<>(setOfVenues);
-					neighbors.remove(vId);
-					neighborMap.put(vId, neighbors);
-					
-					// list of surrounding areas
-					ArrayList<String> ns = getNeighborArea(i, j, numLat, numLng);
-					for (String n : ns) {
-						// add all venues in surrounding areas as neighbors of venue
-						Set<String> nes = venuesInArea.get(n);
-						neighbors.addAll(nes);
+				if (setOfVenues != null) { // if there are no venues in this area, we dont care
+					for (String vId : setOfVenues) {
+						// assign area id to venue
+						areaIdOfVenue.put(vId, areaId);
+						
+						ArrayList<String> subneighbors = new ArrayList<>(setOfVenues);
+						subneighbors.remove(vId);
+						neighbors.put(vId, subneighbors);
+						
+						// list of surrounding areas
+						ArrayList<String> ns = Utils.getNeighborArea(i, j, numLat, numLng);
+						for (String n : ns) {
+							// add all venues in surrounding areas as neighbors of venue
+							Set<String> nes = venuesInArea.get(n);
+							if (nes != null)
+								subneighbors.addAll(nes);
+						}
 					}
 				}
 			}
@@ -263,12 +273,9 @@ public class Utils {
 		// create venue map
 		HashMap<String, VenueObject> venueMap = new HashMap<>();
 		for (String venueId: vInfo.keySet()){
+			PointObject location = vInfo.get(venueId);
 			
-			//parse the location of venues
-			String locString = vInfo.get(venueId);
-			PointObject location = new PointObject(locString);
-			
-			ArrayList<String> neighborIds = neighborMap.get(venueId);
+			ArrayList<String> neighborIds = neighbors.get(venueId);
 			
 			int numCks = countMap.get(venueId);
 			
@@ -276,7 +283,22 @@ public class Utils {
 			
 			VenueObject vo = new VenueObject(venueId, numCks, location, neighborIds, listOfUsers);
 			
+			String areaId = areaIdOfVenue.get(venueId);
+			
+			vo.setAreaId(areaId);
+			
 			venueMap.put(venueId, vo);
+		}
+		
+		// update scope of area
+		for (String areaId : areaMap.keySet()) {
+			AreaObject a = areaMap.get(areaId);
+			double scope = 0.0;
+			for (String vId : a.getSetOfVenueIds()) {
+				double s = venueMap.get(vId).getInfluenceScope();
+				scope += s * s;
+			}
+			a.updateScope(Math.sqrt(scope));
 		}
 		
 		return venueMap;
