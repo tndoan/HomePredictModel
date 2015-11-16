@@ -7,6 +7,7 @@ import java.io.OutputStreamWriter;
 import java.io.Writer;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Set;
 
 import org.object.AreaObject;
@@ -50,14 +51,14 @@ public class Model {
 	/**
 	 * list of user id whose home location are unknown
 	 */
-	private ArrayList<String> unknownLocUsers;
+	private Set<String> unknownLocUsers;
 	
 	public Model() {
 		
 	}
 	
 	public Model(HashMap<String, UserObject> userMap, HashMap<String, VenueObject> venueMap, 
-			HashMap<String, AreaObject> areaMap, ArrayList<String> unknowLocUsers, boolean isSigmoid){
+			HashMap<String, AreaObject> areaMap, Set<String> unknowLocUsers, boolean isSigmoid){
 		this.userMap = userMap;
 		this.venueMap = venueMap;
 		this.areaMap = areaMap;
@@ -71,7 +72,7 @@ public class Model {
 		// initialize 
 		venueMap = new HashMap<>();
 		userMap = new HashMap<>();
-		unknownLocUsers = new ArrayList<>();
+		unknownLocUsers = new HashSet<>();
 		
 		// read data from files
 		HashMap<String, String> vInfo = ReadFile.readLocation(venueLocFile);
@@ -114,7 +115,7 @@ public class Model {
 	}
 	
 	
-	public ArrayList<String> getUnknownLocUsers() {
+	public Set<String> getUnknownLocUsers() {
 		return unknownLocUsers;
 	}
 	
@@ -124,40 +125,51 @@ public class Model {
 		int iteration = 0;
 		
 		System.out.println("init LLH:" + prev_llh);
+		Set<String> allVenues = venueMap.keySet();
+		Set<String> validVenues = new HashSet<>();// only venue with some check-in will be added to this list
+		
+		for (String vId : allVenues) {
+			VenueObject vo = venueMap.get(vId);
+			if (vo.getUserIds() != null) // this venue have some visits from users
+				validVenues.add(vId);
+		}
+		
+		double llh = prev_llh;
 		
 		while (!conv) {
 			// update location of users
 			updateLocOfUsers();
-			double llh = calculateLLH();
-			System.out.println("after update loc of users: " + llh);
+//			double llh = calculateLLH();
+//			System.out.println("after update loc of users: " + llh);
+			System.out.println("after update loc of users: " + calculateLLH());
 			
-			if (Math.abs(llh - prev_llh) < Params.threshold){
-				break; // convergence
-			}
-			
-			prev_llh = llh;
+//			if (Math.abs(llh - prev_llh) < Params.threshold){
+//				break; // convergence
+//			}
+//			
+//			prev_llh = llh;
 			
 			// update the influence scope of venues
 			HashMap<String, Double> updatedScope = new HashMap<>(); // the new scope of each venue
+			
 			// step 1: calculate the scope of each venue and then put them to updatedScope
-			for (String venueId : venueMap.keySet()) {
+			validVenues.parallelStream().forEach(venueId -> {				
 				VenueObject vo = venueMap.get(venueId);
-				if (vo.getUserIds() == null) // this venue does not have any visits from users
-					continue;
+				
 				double curScope = vo.getInfluenceScope();
-				System.out.println("------------");
+//				System.out.println("------------");
 				double scope = maximizeScopeOfVenue(venueId, curScope);
-				System.out.println("------------");
+//				System.out.println("------------");
 				updatedScope.put(venueId, scope);
-			}
+			});
+			
 			// step 2: use new value to override old one
-			for (String venueId : venueMap.keySet()){
+			validVenues.parallelStream().forEach(venueId -> {
 				VenueObject v = venueMap.get(venueId);
-				if (v.getUserIds() == null)
-					continue;
+				
 				double scope = updatedScope.get(venueId);
 				v.updateInfluenceScope(scope);
-			}
+			});
 
 			llh = calculateLLH();
 			System.out.println("after update scope of venues:" + llh);
@@ -176,7 +188,7 @@ public class Model {
 	 * 
 	 */
 	public void updateLocOfUsers() {
-		for (String uId : unknownLocUsers) {
+		unknownLocUsers.parallelStream().forEach((uId) -> {
 			UserObject uo = userMap.get(uId);
 			Set<String> venues = uo.getAllVenues();
 			
@@ -195,7 +207,7 @@ public class Model {
 			}
 			
 			uo.updateLocation(new PointObject(numerator_x / denominator, numerator_y /  denominator));
-		}
+		});
 	}
 	
 	public double maximizeScopeOfVenue(String venueId, double sigma_v) {
@@ -254,7 +266,7 @@ public class Model {
 				
 				// checking the convergence rate
 				double llh = calculateLLH(venueId, sigma_v);
-				System.out.println(llh);
+//				System.out.println(llh);
 				double obj = - t * llh - Math.log(sigma_v);
 //				System.out.println("pre_obj:" + preObj + " obj:" + obj + " sigma:" + sigma_v + " llh:" + (llh)+ " learningRate:" + learningRate);
 				if (iter > 1 && Math.abs(obj - preObj) < Params.threshold) {
