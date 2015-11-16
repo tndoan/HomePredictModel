@@ -303,6 +303,7 @@ public class Utils {
 				double s = venueMap.get(vId).getInfluenceScope();
 				scope += s * s;
 			}
+			scope /= (double) allVenueIds.size();
 			a.updateScope(Math.sqrt(scope));
 		}
 		
