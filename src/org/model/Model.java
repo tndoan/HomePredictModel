@@ -134,6 +134,8 @@ public class Model {
 				validVenues.add(vId);
 		}
 		
+		Set<String> allAreaId = areaMap.keySet(); 
+		
 		double llh = prev_llh;
 		
 		while (!conv) {
@@ -169,6 +171,21 @@ public class Model {
 				
 				double scope = updatedScope.get(venueId);
 				v.updateInfluenceScope(scope);
+			});
+			
+			// step 3: update the scope of area
+			allAreaId.parallelStream().forEach(areaId -> {
+				AreaObject a = areaMap.get(areaId);
+				Set<String> venues = a.getSetOfVenueIds();
+				if (venues != null) {
+					double new_scope = 0.0;
+					for (String vId : venues) {
+						double vScope = venueMap.get(vId).getInfluenceScope();
+						new_scope += vScope * vScope;
+					}
+					new_scope /= (double) venues.size();
+					a.updateScope(Math.sqrt(new_scope));
+				}
 			});
 
 			llh = calculateLLH();
@@ -368,7 +385,7 @@ public class Model {
 	}
 	
 	/**
-	 * 
+	 * Unused
 	 * @param vId
 	 * @param s
 	 */
