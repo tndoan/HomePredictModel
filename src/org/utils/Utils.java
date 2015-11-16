@@ -294,7 +294,12 @@ public class Utils {
 		for (String areaId : areaMap.keySet()) {
 			AreaObject a = areaMap.get(areaId);
 			double scope = 0.0;
-			for (String vId : a.getSetOfVenueIds()) {
+			
+			Set<String> allVenueIds = a.getSetOfVenueIds();
+			if (allVenueIds == null) // if there is no venue in this area, ignore
+				continue;
+			
+			for (String vId : allVenueIds) {
 				double s = venueMap.get(vId).getInfluenceScope();
 				scope += s * s;
 			}
