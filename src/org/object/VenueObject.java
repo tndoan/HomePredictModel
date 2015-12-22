@@ -19,6 +19,16 @@ public class VenueObject {
 		this.isSetArea = false;
 	}
 	
+	public VenueObject(String id, int totalCks,	PointObject location, ArrayList<String> neighbors, ArrayList<String> userIds, double scope) {
+		this.id = id;
+		this.influenceScope = scope;
+		this.location = location;
+		this.neighbors = neighbors;
+		this.userIds = userIds;
+		this.totalCks = totalCks;
+		this.isSetArea = false;
+	}
+	
 	private boolean isSetArea;
 	
 	/**
