@@ -17,23 +17,23 @@ public class Function {
 	}
 	
 	/**
-	 * taking differentiation of Sigmoid function at one point.
+	 * taking differentiation of log Sigmoid function at one point.
 	 * Should be careful if the parameter is -x
-	 * @param x
-	 * @return
+	 * @param x		value
+	 * @return		differentiation
 	 */
-	public static double diffSigmoidFunction(double x) {
+	public static double diffLogSigmoidFunction(double x) {
 		double s = sigmoidFunction(x);
-		return s * ( 1 - s );
+		return (1.0 - s);
 	}
 	
 	/**
-	 * taking differentiation of cdf of standard Gaussian distribution
+	 * taking differentiation of log cdf of standard Gaussian distribution
  	 * Should be careful if the parameter is -x
-	 * @param x	
-	 * @return
+	 * @param x		value
+	 * @return		differentitaion
 	 */
-	public static double diffCDF(double x) {
+	public static double diffLogCDF(double x) {
 		return standardGau.density(x) / standardGau.cumulativeProbability(x);
 	}
 	
