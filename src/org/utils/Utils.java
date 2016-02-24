@@ -1,5 +1,12 @@
 package org.utils;
 
+import java.io.BufferedWriter;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.OutputStreamWriter;
+import java.io.UnsupportedEncodingException;
+import java.io.Writer;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -177,14 +184,16 @@ public class Utils {
 	 * @param countMap
 	 * @param userOfVenueMap
 	 * @param scale				size of the cell in degree
+	 * @param isAverageLoc		true -> location of area is the average locations of all venues in this area; false -> center of the square
 	 * @return
 	 */
 	public static HashMap<String, VenueObject> createNeighborsBox(HashMap<String, PointObject> vInfo, HashMap<String, AreaObject> areaMap, 
-			HashMap<String, Integer> countMap, HashMap<String, ArrayList<String>> userOfVenueMap, double scale) {
+			HashMap<String, Integer> countMap, HashMap<String, ArrayList<String>> userOfVenueMap, double scale, boolean isAverageLoc) {
 		Collection<PointObject> locInfo = vInfo.values();
 		
 		// find venues inside area
 		RectangleObject coverRectangle = MakeAreaMap.surroundingGrid1(locInfo);
+		System.out.println("cover rectangle:" + coverRectangle.toString());
 //		double scale = 0.1; // the size of each square is 0.1 x 0.1 (latitude and longitude)
 		
 		PointObject ne = coverRectangle.getNortheast();
@@ -219,21 +228,6 @@ public class Utils {
 			listOfVenues.add(vId);
 		}
 		
-		// create area
-		for (int i = 0; i < numLat; i++) {
-			for (int j = 0; j < numLng; j++) {
-				String areaId = String.valueOf(i * numLng + j);
-				PointObject sub_ne = new PointObject(base_min_lat + (scale * (double)(i + 1)), base_min_lng + (scale * (double) (j + 1)));
-				PointObject sub_sw = new PointObject(base_min_lat + (scale * (double)(i)), base_min_lng + (scale * (double) (j)));
-				RectangleObject rObj = new RectangleObject(sub_ne, sub_sw);
-				
-				// calculate the scope value of area
-				double scope = 1.0;
-
-				AreaObject area = new AreaObject(areaId, scope, rObj.getCenter(), venuesInArea.get(areaId));
-				areaMap.put(areaId, area);
-			}
-		}
 		
 		// neighbors of a venue in this case are not only venues in the same box (area) with this venue but also 
 		// venues in surrounding boxes of box of this venue. For example, neighbors of venue in box 5 also contain
@@ -276,8 +270,10 @@ public class Utils {
 			PointObject location = vInfo.get(venueId);
 			
 			ArrayList<String> neighborIds = neighbors.get(venueId);
-			
-			int numCks = countMap.get(venueId);
+
+			Integer numCks = countMap.get(venueId);
+			if (numCks == null)
+				numCks = 0;
 			
 			ArrayList<String> listOfUsers = userOfVenueMap.get(venueId);
 			
@@ -290,21 +286,46 @@ public class Utils {
 			venueMap.put(venueId, vo);
 		}
 		
-		// update scope of area
-		for (String areaId : areaMap.keySet()) {
-			AreaObject a = areaMap.get(areaId);
-			double scope = 0.0;
-			
-			Set<String> allVenueIds = a.getSetOfVenueIds();
-			if (allVenueIds == null) // if there is no venue in this area, ignore
-				continue;
-			
-			for (String vId : allVenueIds) {
-				double s = venueMap.get(vId).getInfluenceScope();
-				scope += s * s;
+		// create area
+		for (int i = 0; i < numLat; i++) {
+			for (int j = 0; j < numLng; j++) {
+				String areaId = String.valueOf(i * numLng + j);
+				
+				// calculate the scope value of area
+				double scope = 0.0;
+				Set<String> allVenueIds = venuesInArea.get(areaId);
+				if (allVenueIds == null) // if there is no venue in this area, ignore
+					continue;
+				
+				double average_lat = 0.0;
+				double average_lng = 0.0;
+				
+				for (String vId : allVenueIds) {
+					VenueObject v = venueMap.get(vId);
+					double s = v.getInfluenceScope();
+					scope += s * s;
+					
+					average_lat += v.getLocation().getLat();
+					average_lng += v.getLocation().getLng();
+				}
+				scope /= (double) allVenueIds.size();
+				average_lat /= (double) allVenueIds.size();
+				average_lng /= (double) allVenueIds.size();
+				
+				// location of area
+				PointObject aLoc = null;
+				if (isAverageLoc) {
+					aLoc = new PointObject(average_lat, average_lng);
+				} else {
+					PointObject sub_ne = new PointObject(base_min_lat + (scale * (double)(i + 1)), base_min_lng + (scale * (double) (j + 1)));
+					PointObject sub_sw = new PointObject(base_min_lat + (scale * (double)(i)), base_min_lng + (scale * (double) (j)));
+					RectangleObject rObj = new RectangleObject(sub_ne, sub_sw);
+					aLoc = rObj.getCenter();
+				}
+
+				AreaObject area = new AreaObject(areaId, Math.sqrt(scope), aLoc, allVenueIds);
+				areaMap.put(areaId, area);
 			}
-			scope /= (double) allVenueIds.size();
-			a.updateScope(Math.sqrt(scope));
 		}
 		
 		return venueMap;
@@ -338,5 +359,24 @@ public class Utils {
 			result.add(String.valueOf((i + 1) * numLat + j + 1));
 		
 		return result;
+	}
+	
+	/**
+	 * write list of string to file whose name is given
+	 * @param results						list of string. Note: Each string does not contain "break line"(\n) character
+	 * @param fname							name of the file
+	 * @throws UnsupportedEncodingException
+	 * @throws FileNotFoundException
+	 * @throws IOException
+	 */
+	public static void writeFile(ArrayList<String> results, String fname)
+			throws UnsupportedEncodingException, FileNotFoundException,
+			IOException {
+		try (Writer writer = new BufferedWriter(new OutputStreamWriter(
+				new FileOutputStream(fname), "utf-8"))) {
+			for (String s : results) {
+				writer.write(s + "\n");
+			}
+		}
 	}
 }
