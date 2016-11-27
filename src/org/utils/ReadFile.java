@@ -17,7 +17,7 @@ public class ReadFile {
 	 * each line has the format
 	 * <userId> <venueId>:<numCks> <venueId>:<numCks> <venueId>:<numCks> <venueId>:<numCks> ....
 	 * @param filename the name of file
-	 * @return
+	 * @return	hashmap whose key is user id and value is map (key venue id, value is # of cks between user and venue)
 	 */
 	public static HashMap<String, HashMap<String, Integer>> readNumCksFile(String filename){
 		HashMap<String, HashMap<String, Integer>> result = null;
