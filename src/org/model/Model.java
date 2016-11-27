@@ -1,9 +1,11 @@
 package org.model;
 
 import java.io.BufferedWriter;
+import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStreamWriter;
+import java.io.UnsupportedEncodingException;
 import java.io.Writer;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -65,6 +67,51 @@ public class Model {
 		this.unknownLocUsers = unknowLocUsers;
 		this.isSigmoid = isSigmoid;
 	}
+	
+	/**
+	 * construct model without home location of users so we use center of the mass as home locations of users
+	 * @param venueLocFile
+	 * @param cksFile
+	 * @param isAverageLocation
+	 * @param isSigmoid
+	 * @param scale
+	 */
+	public Model(String venueLocFile, String cksFile, boolean isAverageLocation, boolean isSigmoid, double scale) {
+		//TODO need to test carefully before using
+		this.isSigmoid = isSigmoid;
+		
+		// initialize 
+		venueMap = new HashMap<>();
+		userMap = new HashMap<>();
+		unknownLocUsers = new HashSet<>();
+		
+		//read data from files
+		HashMap<String, String> vInfo = ReadFile.readLocation(venueLocFile);
+		HashMap<String, HashMap<String, Integer>> cksMap = ReadFile.readNumCksFile(cksFile);
+		
+		HashMap<String, ArrayList<String>> userOfVenueMap = Utils.collectUsers(cksMap);
+		
+		// make venue object
+		HashMap<String, PointObject> vLocInfo = new HashMap<>();
+		for (String vId : vInfo.keySet()) {
+			PointObject p = new PointObject(vInfo.get(vId));
+			vLocInfo.put(vId, p);
+		}
+		
+		HashMap<String, Integer> countMap = Utils.countCks(cksMap);
+
+		areaMap = new HashMap<>();
+		venueMap = Utils.createNeighborsBox(vLocInfo, areaMap, countMap, userOfVenueMap, scale, isAverageLocation);
+		
+		// make user object
+		Set<String> uSet = cksMap.keySet();
+		for (String uId : uSet) {
+			HashMap<String, Integer> checkinMap = cksMap.get(uId);
+			PointObject uPoint = Utils.calculateCenterOfMass(checkinMap, vLocInfo);
+			UserObject u = new UserObject(uId, uPoint, true, checkinMap);
+			userMap.put(uId, u);
+		}
+	}
 		
 	public Model(String venueLocFile, String userLocFile, String cksFile, boolean isAverageLocation, boolean isSigmoid, double scale){
 		this.isSigmoid = isSigmoid;
@@ -89,7 +136,6 @@ public class Model {
 		
 		// making user objects
 		for(String userId : uInfo.keySet()){
-			
 			// parse the location of users 
 			String locInfo = uInfo.get(userId);
 			PointObject location = new PointObject(locInfo);
@@ -111,7 +157,7 @@ public class Model {
 		HashMap<String, Integer> countMap = Utils.countCks(cksMap);
 
 		areaMap = new HashMap<>();
-		venueMap = Utils.createNeighborsBox(vLocInfo, areaMap, countMap, userOfVenueMap, scale);
+		venueMap = Utils.createNeighborsBox(vLocInfo, areaMap, countMap, userOfVenueMap, scale, isAverageLocation);
 	}
 	
 	
@@ -119,7 +165,11 @@ public class Model {
 		return unknownLocUsers;
 	}
 	
-	public void learnParameter(){
+	/**
+	 * 
+	 * @param checkinMode 1: use actual # of check-in; 2: log(# cks of user); 3: binary check-in
+	 */
+	public void learnParameter(int checkinMode){
 		boolean conv = false;
 		double prev_llh = calculateLLH();
 		int iteration = 0;
@@ -133,14 +183,14 @@ public class Model {
 			if (vo.getUserIds() != null) // this venue have some visits from users
 				validVenues.add(vId);
 		}
-		
+
 		Set<String> allAreaId = areaMap.keySet(); 
 		
 		double llh = prev_llh;
 		
 		while (!conv) {
 			// update location of users
-			updateLocOfUsers();
+			updateLocOfUsers(checkinMode);
 //			double llh = calculateLLH();
 //			System.out.println("after update loc of users: " + llh);
 			System.out.println("after update loc of users: " + calculateLLH());
@@ -155,15 +205,17 @@ public class Model {
 			HashMap<String, Double> updatedScope = new HashMap<>(); // the new scope of each venue
 			
 			// step 1: calculate the scope of each venue and then put them to updatedScope
+//			for (String venueId : validVenues) {
 			validVenues.parallelStream().forEach(venueId -> {				
 				VenueObject vo = venueMap.get(venueId);
 				
 				double curScope = vo.getInfluenceScope();
 //				System.out.println("------------");
-				double scope = maximizeScopeOfVenue(venueId, curScope);
+				double scope = maximizeScopeOfVenue(venueId, curScope, checkinMode);
 //				System.out.println("------------");
 				updatedScope.put(venueId, scope);
 			});
+//			}
 			
 			// step 2: use new value to override old one
 			validVenues.parallelStream().forEach(venueId -> {
@@ -183,7 +235,8 @@ public class Model {
 						double vScope = venueMap.get(vId).getInfluenceScope();
 						new_scope += vScope * vScope;
 					}
-					new_scope /= (double) venues.size();
+					// scope of area is the sum of scope of all venues inside
+//					new_scope /= (double) venues.size();
 					a.updateScope(Math.sqrt(new_scope));
 				}
 			});
@@ -202,9 +255,9 @@ public class Model {
 	}
 	
 	/**
-	 * 
+	 * @param checkinMode 1: use actual # of check-in; 2: log(# cks of user); 3: binary check-in
 	 */
-	public void updateLocOfUsers() {
+	public void updateLocOfUsers(int checkinMode) {
 		unknownLocUsers.parallelStream().forEach((uId) -> {
 			UserObject uo = userMap.get(uId);
 			Set<String> venues = uo.getAllVenues();
@@ -217,7 +270,15 @@ public class Model {
 				VenueObject vo = venueMap.get(vId);
 				String areaId = vo.getAreaId();
 				AreaObject ao = areaMap.get(areaId);
-				double weight = ((double) uo.retrieveNumCks(vId)) / (ao.getScope() * ao.getScope()); 
+				
+				double numCks = 1.0;
+				if (checkinMode == 1) 
+					numCks = (double) uo.retrieveNumCks(vId);
+				else if (checkinMode == 2) 
+					numCks = Math.log((double) uo.retrieveNumCks(vId));
+				
+//				double weight = ((double) uo.retrieveNumCks(vId)) / (ao.getScope() * ao.getScope());
+				double weight = numCks / (ao.getScope() * ao.getScope());
 				numerator_x += weight * ao.getLocation().getLat();
 				numerator_y += weight * ao.getLocation().getLng();
 				denominator += weight;
@@ -226,8 +287,15 @@ public class Model {
 			uo.updateLocation(new PointObject(numerator_x / denominator, numerator_y /  denominator));
 		});
 	}
-	
-	public double maximizeScopeOfVenue(String venueId, double sigma_v) {
+
+	/**
+	 * 
+	 * @param venueId
+	 * @param sigma_v
+	 * @param checkinMode 1: use actual # of check-in; 2: log(# cks of user); 3: binary check-in
+	 * @return
+	 */
+	public double maximizeScopeOfVenue(String venueId, double sigma_v, int checkinMode) {
 		VenueObject vObj = venueMap.get(venueId);
 		ArrayList<String> neighbors = vObj.getNeighbors();
 		String areaId = vObj.getAreaId();
@@ -247,7 +315,6 @@ public class Model {
 		double tempSqCurrentScope = areaMap.get(areaId).getScope() * areaMap.get(areaId).getScope();
 		areaSourdingMap.put(venueId, tempSqCurrentScope - sqSigma_v);
 		
-		
 		double t = 1.0;
 
 		boolean inner_conv = false;
@@ -260,9 +327,8 @@ public class Model {
 
 			while (!inner_conv){
 				// Step 1: calculate gradient calculation 
-				double grad = grad(venueId, sigma_v, areaSourdingMap, t);
+				double grad = grad(venueId, sigma_v, areaSourdingMap, t, checkinMode);
 				
-				//TODO : have bug in backtracking
 				double learningRate = 1.0; // it will be decreased using backtracking 
 				double s = sigma_v - learningRate * grad;
 				double lhs = - t * calculateLLH(venueId, s) - Math.log(s);
@@ -303,7 +369,8 @@ public class Model {
 		
 		return sigma_v;
 	}
-	
+
+	/*
 	public double grad(String venueId, double sigma_v, double t) {
 		VenueObject vObj = venueMap.get(venueId);
 		String areaId = vObj.getAreaId();
@@ -325,8 +392,18 @@ public class Model {
 		
 		return grad(venueId, sigma_v, areaSourdingMap, t);
 	}
+	*/
 	
-	private double grad(String venueId, double sigma_v, HashMap<String, Double> areaSourdingMap, double t) {
+	/**
+	 * 
+	 * @param venueId
+	 * @param sigma_v
+	 * @param areaSourdingMap
+	 * @param t
+	 * @param checkinMode 		1: use actual # of check-in; 2: log(# cks of user); 3: binary check-in
+	 * @return
+	 */
+	private double grad(String venueId, double sigma_v, HashMap<String, Double> areaSourdingMap, double t, int checkinMode) {
 		double grad = 0.0;
 		
 		VenueObject vObj = venueMap.get(venueId);
@@ -337,7 +414,13 @@ public class Model {
 		ArrayList<String> users = vObj.getUserIds(); 
 		for (String userId : users) {
 			UserObject uo = userMap.get(userId);
-			double w = uo.retrieveNumCks(venueId);
+			
+			double w = 1.0;
+			if (checkinMode == 1)
+				w = (double) uo.retrieveNumCks(venueId);
+			else if (checkinMode == 2)
+				w = Math.log((double) uo.retrieveNumCks(venueId));
+			
 			double d = Distance.calSqEuDistance(uo.getLocation(), areaMap.get(areaId).getLocation());
 			double sq_sigma_v_prime = areaSourdingMap.get(venueId) + sigma_v * sigma_v;
 			grad += w * (-2.0 * sigma_v / sq_sigma_v_prime + sigma_v * d / (sq_sigma_v_prime * sq_sigma_v_prime));
@@ -355,7 +438,13 @@ public class Model {
 				continue;
 			for (String u : uOfNeighbors) {
 				UserObject uo = userMap.get(u);
-				double w_in = uo.retrieveNumCks(neighbor);
+				
+				double w_in = 1.0;
+				if (checkinMode == 1)
+					w_in = (double) uo.retrieveNumCks(neighbor);
+				else if (checkinMode == 2)
+					w_in = Math.log((double) uo.retrieveNumCks(neighbor));
+
 				double d = Distance.calSqEuDistance(uo.getLocation(), neighborAreaObj.getLocation());
 				grad += w_in * (-2.0 * sigma_v / sq_sigma_n_prime + sigma_v *d / (sq_sigma_n_prime * sq_sigma_n_prime));
 			}
@@ -364,11 +453,11 @@ public class Model {
 			double diff = sigma_v - neighborObj.getInfluenceScope();
 			double p_vn = 0.0; double p_nv = 0.0;
 			if (isSigmoid){ // sigmoid function
-				p_vn = Function.diffSigmoidFunction(diff);
-				p_nv = -Function.diffSigmoidFunction(-diff);
+				p_vn = Function.diffLogSigmoidFunction(diff);
+				p_nv = -Function.diffLogSigmoidFunction(-diff);
 			} else { // CDF function
-				p_vn = Function.diffCDF(diff);
-				p_nv = - Function.diffCDF(-diff);
+				p_vn = Function.diffLogCDF(diff);
+				p_nv = - Function.diffLogCDF(-diff);
 			}
 			grad += w_v * p_vn + w_n * p_nv;
 		}
@@ -456,6 +545,24 @@ public class Model {
 			System.out.println("venue id:\t" + v.getId() + "\tinfluence scope:" + v.getInfluenceScope());
 		}
 	}
+	
+	public void printInfluenceScope(String fname) throws UnsupportedEncodingException, FileNotFoundException, IOException {
+		ArrayList<String> result = new ArrayList<>();
+		for (VenueObject v : venueMap.values()) {
+			result.add(v.getId() + "," + v.getInfluenceScope());
+		}
+		Utils.writeFile(result, fname);
+	}
+	
+	public void printInfScopeVenueArea(String fname) throws UnsupportedEncodingException, FileNotFoundException, IOException {
+		ArrayList<String> result = new ArrayList<>();
+		for (VenueObject v : venueMap.values()) {
+			String aId = v.getAreaId();
+			AreaObject aObj = areaMap.get(aId);
+			result.add(v.getId() + "," + v.getInfluenceScope() + "," + aObj.getScope());
+		}
+		Utils.writeFile(result, fname);
+	}
 
 	/**
 	 * 
@@ -464,5 +571,62 @@ public class Model {
 	 */
 	public PointObject getUserLoc(String userId) {
 		return userMap.get(userId).getLocation();
+	}
+	
+	/**
+	 * save all result for later use in JSON format
+	 * @param fname filename
+	 * @throws IOException 
+	 * @throws FileNotFoundException 
+	 * @throws UnsupportedEncodingException 
+	 */
+	public void saveResult(String fname) throws UnsupportedEncodingException, FileNotFoundException, IOException {		
+		// save area info
+		ArrayList<String> aString = new ArrayList<>();
+		for (AreaObject ao : areaMap.values()) {
+			String id = ao.getId();
+			String scope = String.valueOf(ao.getScope());
+			PointObject loc = ao.getLocation();
+			String lat = String.valueOf(loc.getLat());
+			String lng = String.valueOf(loc.getLng());
+//			sb.append("\"" + id + "\" : { \"scope\":" + scope +  ",\"lat\":" + lat + ", \"lng\" :" + lng + "}");
+			aString.add(id + "," + scope +  "," + lat + "," + lng);
+		}
+		Utils.writeFile(aString, fname + "_area");		
+		
+		// save venue scope, neighbors and area which it belong to
+		ArrayList<String> vString = new ArrayList<>();
+		for (VenueObject vo : venueMap.values()) {			
+			String id = vo.getId();
+			ArrayList<String> neighbors = vo.getNeighbors();
+			String aId = vo.getAreaId();
+			String scope = String.valueOf(vo.getInfluenceScope());
+//			sb.append("\"").append(id).append("\" : { \"aId\" :").append(aId).append(", \"scope\":").append(scope)
+//				.append(", \"neighbors\":[");
+			vString.add(id + "," + aId + "," + scope );
+			StringBuffer sb = new StringBuffer();
+			boolean isB = true;
+			for (String neighbor : neighbors) {
+				if(isB) isB = false;
+				else sb.append(",");
+				sb.append(neighbor);
+			}
+			vString.add(sb.toString());
+		}
+		Utils.writeFile(vString, fname + "_venue");
+		
+		// save user location
+//		ArrayList<String> uString = new ArrayList<>();
+//		for (UserObject uo : userMap.values()) {
+//			String id = uo.getId();
+//			PointObject home = uo.getLocation();
+//			String lat = String.valueOf(home.getLat());
+//			String lng = String.valueOf(home.getLng());
+//			sb.append("\"" + id + "\" : { \"lat\":" + lat + ", \"lng\" :" + lng + "}");
+//		}
+//		sb.append("}");
+//		result.add(sb.toString());
+//
+//		Utils.writeFile(result, fname);
 	}
 }
