@@ -54,18 +54,28 @@ public class Model {
 	 * list of user id whose home location are unknown
 	 */
 	private Set<String> unknownLocUsers;
+
+	/**
+	 * indicate which effects are used in model
+	 * see ModeModel class for more details
+	 */
+	private int modeModel;
 	
 	public Model() {
 		
 	}
 	
 	public Model(HashMap<String, UserObject> userMap, HashMap<String, VenueObject> venueMap, 
-			HashMap<String, AreaObject> areaMap, Set<String> unknowLocUsers, boolean isSigmoid){
+			HashMap<String, AreaObject> areaMap, Set<String> unknownLocUsers, boolean isSigmoid, int modeModel){
+		assert (modeModel == ModeModel.DISTANCE_AREAATTRACTION ||
+				modeModel == ModeModel.NEIGHBORHOOD_COMPETITION ||
+				modeModel == ModeModel.COMBINED);
 		this.userMap = userMap;
 		this.venueMap = venueMap;
 		this.areaMap = areaMap;
-		this.unknownLocUsers = unknowLocUsers;
+		this.unknownLocUsers = unknownLocUsers;
 		this.isSigmoid = isSigmoid;
+		this.modeModel = modeModel;
 	}
 	
 	/**
@@ -75,10 +85,16 @@ public class Model {
 	 * @param isAverageLocation
 	 * @param isSigmoid
 	 * @param scale
+	 * @param modeModel				indicate if neighborhood competition, area attraction or both are used in our model
 	 */
-	public Model(String venueLocFile, String cksFile, boolean isAverageLocation, boolean isSigmoid, double scale) {
+	public Model(String venueLocFile, String cksFile, boolean isAverageLocation, boolean isSigmoid, double scale,
+				 int modeModel) {
 		//TODO need to test carefully before using
+		assert (modeModel == ModeModel.DISTANCE_AREAATTRACTION ||
+				modeModel == ModeModel.NEIGHBORHOOD_COMPETITION ||
+				modeModel == ModeModel.COMBINED);
 		this.isSigmoid = isSigmoid;
+		this.modeModel = modeModel;
 		
 		// initialize 
 		venueMap = new HashMap<>();
@@ -113,7 +129,12 @@ public class Model {
 		}
 	}
 		
-	public Model(String venueLocFile, String userLocFile, String cksFile, boolean isAverageLocation, boolean isSigmoid, double scale){
+	public Model(String venueLocFile, String userLocFile, String cksFile, boolean isAverageLocation, boolean isSigmoid,
+				 double scale, int modeModel){
+		assert (modeModel == ModeModel.DISTANCE_AREAATTRACTION ||
+				modeModel == ModeModel.NEIGHBORHOOD_COMPETITION ||
+				modeModel == ModeModel.COMBINED);
+		this.modeModel = modeModel;
 		this.isSigmoid = isSigmoid;
 		
 		// initialize 
@@ -261,11 +282,11 @@ public class Model {
 		unknownLocUsers.parallelStream().forEach((uId) -> {
 			UserObject uo = userMap.get(uId);
 			Set<String> venues = uo.getAllVenues();
-			
+
 			double numerator_x = 0.0; 
 			double numerator_y = 0.0;
 			double denominator = 0.0;
-			
+
 			for (String vId : venues) {
 				VenueObject vo = venueMap.get(vId);
 				String areaId = vo.getAreaId();
@@ -398,12 +419,12 @@ public class Model {
 	 * 
 	 * @param venueId
 	 * @param sigma_v
-	 * @param areaSourdingMap
+	 * @param areaSurroundingMap
 	 * @param t
 	 * @param checkinMode 		1: use actual # of check-in; 2: log(# cks of user); 3: binary check-in
 	 * @return
 	 */
-	private double grad(String venueId, double sigma_v, HashMap<String, Double> areaSourdingMap, double t, int checkinMode) {
+	public double grad(String venueId, double sigma_v, HashMap<String, Double> areaSurroundingMap, double t, int checkinMode) {
 		double grad = 0.0;
 		
 		VenueObject vObj = venueMap.get(venueId);
@@ -411,55 +432,62 @@ public class Model {
 		double w_v = vObj.getTotalCks();
 		ArrayList<String> neighbors = vObj.getNeighbors();
 		
-		ArrayList<String> users = vObj.getUserIds(); 
-		for (String userId : users) {
-			UserObject uo = userMap.get(userId);
-			
-			double w = 1.0;
-			if (checkinMode == 1)
-				w = (double) uo.retrieveNumCks(venueId);
-			else if (checkinMode == 2)
-				w = Math.log((double) uo.retrieveNumCks(venueId));
-			
-			double d = Distance.calSqEuDistance(uo.getLocation(), areaMap.get(areaId).getLocation());
-			double sq_sigma_v_prime = areaSourdingMap.get(venueId) + sigma_v * sigma_v;
-			grad += w * (-2.0 * sigma_v / sq_sigma_v_prime + sigma_v * d / (sq_sigma_v_prime * sq_sigma_v_prime));
+		ArrayList<String> users = vObj.getUserIds();
+		if (modeModel == ModeModel.COMBINED || modeModel == ModeModel.DISTANCE_AREAATTRACTION) {
+			for (String userId : users) {
+				UserObject uo = userMap.get(userId);
+
+				double w = 1.0;
+				if (checkinMode == 1)
+					w = (double) uo.retrieveNumCks(venueId);
+				else if (checkinMode == 2)
+					w = Math.log((double) uo.retrieveNumCks(venueId));
+
+				double d = Distance.calSqEuDistance(uo.getLocation(), areaMap.get(areaId).getLocation());
+				double sq_sigma_v_prime = areaSurroundingMap.get(venueId) + sigma_v * sigma_v;
+				grad += w * (-2.0 * sigma_v / sq_sigma_v_prime + sigma_v * d / (sq_sigma_v_prime * sq_sigma_v_prime));
+			}
 		}
 		
 		for (String neighbor : neighbors){
 			VenueObject neighborObj = venueMap.get(neighbor);
 			AreaObject neighborAreaObj = areaMap.get(neighborObj.getAreaId());
 			double w_n = neighborObj.getTotalCks();
-			
-			// second term of gradient
-			double sq_sigma_n_prime = areaSourdingMap.get(neighbor) + sigma_v * sigma_v;
-			ArrayList<String> uOfNeighbors = neighborObj.getUserIds();
-			if (uOfNeighbors == null) 
-				continue;
-			for (String u : uOfNeighbors) {
-				UserObject uo = userMap.get(u);
-				
-				double w_in = 1.0;
-				if (checkinMode == 1)
-					w_in = (double) uo.retrieveNumCks(neighbor);
-				else if (checkinMode == 2)
-					w_in = Math.log((double) uo.retrieveNumCks(neighbor));
 
-				double d = Distance.calSqEuDistance(uo.getLocation(), neighborAreaObj.getLocation());
-				grad += w_in * (-2.0 * sigma_v / sq_sigma_n_prime + sigma_v *d / (sq_sigma_n_prime * sq_sigma_n_prime));
+			if (modeModel == ModeModel.COMBINED || modeModel == ModeModel.DISTANCE_AREAATTRACTION) {
+				// second term of gradient
+				double sq_sigma_n_prime = areaSurroundingMap.get(neighbor) + sigma_v * sigma_v;
+				ArrayList<String> uOfNeighbors = neighborObj.getUserIds();
+				if (uOfNeighbors == null)
+					continue;
+				for (String u : uOfNeighbors) {
+					UserObject uo = userMap.get(u);
+
+					double w_in = 1.0;
+					if (checkinMode == 1)
+						w_in = (double) uo.retrieveNumCks(neighbor);
+					else if (checkinMode == 2)
+						w_in = Math.log((double) uo.retrieveNumCks(neighbor));
+
+					double d = Distance.calSqEuDistance(uo.getLocation(), neighborAreaObj.getLocation());
+					grad += w_in * (-2.0 * sigma_v / sq_sigma_n_prime + sigma_v * d / (sq_sigma_n_prime * sq_sigma_n_prime));
+				}
 			}
-			
-			// third term and 4th term of gradient
-			double diff = sigma_v - neighborObj.getInfluenceScope();
-			double p_vn = 0.0; double p_nv = 0.0;
-			if (isSigmoid){ // sigmoid function
-				p_vn = Function.diffLogSigmoidFunction(diff);
-				p_nv = -Function.diffLogSigmoidFunction(-diff);
-			} else { // CDF function
-				p_vn = Function.diffLogCDF(diff);
-				p_nv = - Function.diffLogCDF(-diff);
+
+			if (modeModel == ModeModel.COMBINED || modeModel == ModeModel.NEIGHBORHOOD_COMPETITION) {
+				// third term and 4th term of gradient
+				double diff = sigma_v - neighborObj.getInfluenceScope();
+				double p_vn = 0.0;
+				double p_nv = 0.0;
+				if (isSigmoid) { // sigmoid function
+					p_vn = Function.diffLogSigmoidFunction(diff);
+					p_nv = -Function.diffLogSigmoidFunction(-diff);
+				} else { // CDF function
+					p_vn = Function.diffLogCDF(diff);
+					p_nv = -Function.diffLogCDF(-diff);
+				}
+				grad += w_v * p_vn + w_n * p_nv;
 			}
-			grad += w_v * p_vn + w_n * p_nv;
 		}
 		
 		grad = -t * grad;
@@ -494,11 +522,11 @@ public class Model {
 	}
 	
 	public double calculateLLH() {
-		return Loglikelihood.calculateLLH(userMap, venueMap, areaMap, isSigmoid);
+		return Loglikelihood.calculateLLH(userMap, venueMap, areaMap, isSigmoid, modeModel);
 	}
 	
 	public double calculateLLH(String venueId, double sigma_v) {
-		return Loglikelihood.calculateLLH(userMap, venueMap, areaMap, isSigmoid, venueId, sigma_v);
+		return Loglikelihood.calculateLLH(userMap, venueMap, areaMap, isSigmoid, venueId, sigma_v, modeModel);
 	}
 	
 	/**
@@ -508,7 +536,6 @@ public class Model {
 	 * @throws IOException
 	 */
 	public void saveResult(String userLocFname, String venueScopeFname) throws IOException {
-		
 		// write location of users
 		Writer writer = null;
 
@@ -627,5 +654,13 @@ public class Model {
 //		sb.append("}");
 //		result.add(sb.toString());
 //		Utils.writeFile(result, fname);
+	}
+
+	public VenueObject getVenueObj(String vId) {
+		return this.venueMap.get(vId);
+	}
+
+	public AreaObject getAreaObj(String aId) {
+		return this.areaMap.get(aId);
 	}
 }
