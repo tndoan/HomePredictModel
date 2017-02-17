@@ -12,9 +12,7 @@ import org.utils.Distance;
 import org.utils.Function;
 
 public class Loglikelihood {
-	/**
-	 * 
-	 */
+
 	private static NormalDistribution standardGau = new NormalDistribution();
 	
 	/**
@@ -42,7 +40,8 @@ public class Loglikelihood {
 					double distance = Distance.calSqEuDistance(uo.getLocation(), ao.getLocation());
 
 					double w_iv = uo.retrieveNumCks(venueId);
-					llh += w_iv * (-2.0 * Math.log(ao.getScope()) - distance / (2 * ao.getScope() * ao.getScope()));
+
+					llh += w_iv * (- Math.log(ao.getScope()) - distance / (2 * ao.getScope() * ao.getScope()));
 				}
 			}
 		}
@@ -104,7 +103,7 @@ public class Loglikelihood {
 
 				double w = uo.retrieveNumCks(venueId);
 				double d = Distance.calSqEuDistance(ao.getLocation(), uo.getLocation());
-				llh += w * (-2.0 * Math.log(Math.sqrt(tempSqScope)) - d / (2.0 * tempSqScope));
+				llh += w * (- Math.log(Math.sqrt(tempSqScope)) - d / (2.0 * tempSqScope));
 			}
 
 			// second term
@@ -122,7 +121,7 @@ public class Loglikelihood {
 					UserObject u = userMap.get(nUId);
 					double w = u.retrieveNumCks(nId);
 					double d = Distance.calSqEuDistance(u.getLocation(), na.getLocation());
-					llh += w * (-2.0 * Math.log(Math.sqrt(sqScope)) - d / (2.0 * sqScope));
+					llh += w * (- Math.log(Math.sqrt(sqScope)) - d / (2.0 * sqScope));
 				}
 			}
 		}
@@ -153,7 +152,7 @@ public class Loglikelihood {
 				}
 			}
 		}
-		
+
 		return llh;
 	}
 }
