@@ -7,10 +7,7 @@ import java.io.IOException;
 import java.io.OutputStreamWriter;
 import java.io.UnsupportedEncodingException;
 import java.io.Writer;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Set;
+import java.util.*;
 
 import org.object.AreaObject;
 import org.object.PointObject;
@@ -223,7 +220,7 @@ public class Model {
 //			prev_llh = llh;
 			
 			// update the influence scope of venues
-			HashMap<String, Double> updatedScope = new HashMap<>(); // the new scope of each venue
+			Map<String, Double> updatedScope = Collections.synchronizedMap(new HashMap<>()); // the new scope of each venue
 			
 			// step 1: calculate the scope of each venue and then put them to updatedScope
 //			for (String venueId : validVenues) {
@@ -237,7 +234,13 @@ public class Model {
 				updatedScope.put(venueId, scope);
 			});
 //			}
-			
+
+			llh = intermediateLLH(updatedScope, validVenues, allAreaId);
+			if (llh < prev_llh) { // no increase
+				conv = true;
+				continue;
+			}
+
 			// step 2: use new value to override old one
 			validVenues.parallelStream().forEach(venueId -> {
 				VenueObject v = venueMap.get(venueId);
@@ -262,7 +265,6 @@ public class Model {
 				}
 			});
 
-			llh = calculateLLH();
 			System.out.println("after update scope of venues:" + llh);
 			
 			// checking convergence
@@ -345,16 +347,31 @@ public class Model {
 //		System.out.println(preObj);
 		while (!outter_conv){
 			int iter = 0;
+			double learningRate = 1.0; // it will be decreased using backtracking
 
 			while (!inner_conv){
 				// Step 1: calculate gradient calculation 
 				double grad = grad(venueId, sigma_v, areaSourdingMap, t, checkinMode);
 				
-				double learningRate = 1.0; // it will be decreased using backtracking 
 				double s = sigma_v - learningRate * grad;
 				double lhs = - t * calculateLLH(venueId, s) - Math.log(s);
-				double rhs = preObj - Params.alpha * learningRate * grad * grad;
 				int inter_iter = 0; // if learning rate goes to far, it creates computational error
+				while ((!Double.isFinite(lhs) || Double.isNaN(lhs)) && inter_iter != 1000){
+					learningRate = Params.beta * learningRate;
+					s = sigma_v - learningRate * grad;
+					if (Double.isNaN(s) || Double.isNaN(learningRate)) { // it is optimal point already
+						inter_iter = 1000;
+						break;
+					}
+					lhs = -t * calculateLLH(venueId, s) - Math.log(s);
+					inter_iter++;
+				}
+
+				if (inter_iter == 1000) // nothing to optimize
+					break;
+
+				double rhs = preObj - Params.alpha * learningRate * grad * grad;
+				inter_iter = 0;
 				while ((!Double.isFinite(lhs) || !Double.isFinite(rhs) || lhs > rhs) && inter_iter != 1000) {
 					learningRate = Params.beta * learningRate;
 					s = sigma_v - learningRate * grad;
@@ -363,7 +380,7 @@ public class Model {
 					inter_iter++;
 				}
 				
-				if (inter_iter == 1000) 
+				if (inter_iter == 1000) // nothing to optimize
 					break;
 				
 				sigma_v = sigma_v - learningRate * grad;
@@ -391,30 +408,6 @@ public class Model {
 		return sigma_v;
 	}
 
-	/*
-	public double grad(String venueId, double sigma_v, double t) {
-		VenueObject vObj = venueMap.get(venueId);
-		String areaId = vObj.getAreaId();
-		ArrayList<String> neighbors = vObj.getNeighbors();
-
-		// \sigma_v is in all the area of their neighbors. so when we update sigma_v, the influence scope of areas which contain venue v are also
-		// needed to be updated. Key of this map is id of area, venue is the square influence scope which does not contain venue v. 
-		HashMap<String, Double> areaSourdingMap = new HashMap<>();
-		
-		double sqSigma_v = vObj.getInfluenceScope() * vObj.getInfluenceScope();
-		for (String n : neighbors) {
-			VenueObject nObj = venueMap.get(n);
-			double currentScope = areaMap.get(nObj.getAreaId()).getScope();
-			double sqCurrentScope =  currentScope * currentScope;
-			areaSourdingMap.put(n, sqCurrentScope - sqSigma_v);
-		}
-		double tempSqCurrentScope = areaMap.get(areaId).getScope() * areaMap.get(areaId).getScope();
-		areaSourdingMap.put(venueId, tempSqCurrentScope - sqSigma_v);
-		
-		return grad(venueId, sigma_v, areaSourdingMap, t);
-	}
-	*/
-	
 	/**
 	 * 
 	 * @param venueId
@@ -445,7 +438,7 @@ public class Model {
 
 				double d = Distance.calSqEuDistance(uo.getLocation(), areaMap.get(areaId).getLocation());
 				double sq_sigma_v_prime = areaSurroundingMap.get(venueId) + sigma_v * sigma_v;
-				grad += w * (-2.0 * sigma_v / sq_sigma_v_prime + sigma_v * d / (sq_sigma_v_prime * sq_sigma_v_prime));
+				grad += w * (- sigma_v / sq_sigma_v_prime + sigma_v * d / (sq_sigma_v_prime * sq_sigma_v_prime));
 			}
 		}
 		
@@ -470,7 +463,7 @@ public class Model {
 						w_in = Math.log((double) uo.retrieveNumCks(neighbor));
 
 					double d = Distance.calSqEuDistance(uo.getLocation(), neighborAreaObj.getLocation());
-					grad += w_in * (-2.0 * sigma_v / sq_sigma_n_prime + sigma_v * d / (sq_sigma_n_prime * sq_sigma_n_prime));
+					grad += w_in * (- sigma_v / sq_sigma_n_prime + sigma_v * d / (sq_sigma_n_prime * sq_sigma_n_prime));
 				}
 			}
 
@@ -500,27 +493,44 @@ public class Model {
 	public double getInfluenceScope(String vId) {
 		return venueMap.get(vId).getInfluenceScope();
 	}
-	
+
 	/**
-	 * Unused
-	 * @param vId
-	 * @param s
+	 * calculate the intermediate log likelihood of model but the scopes of venues are in a given map
+	 * @param updatedScope	a map that contains the new scopes of venues
+	 * @param validVenues	set of venues which have some check-ins
+	 * @param allAreaId		all ids of areas
+	 * @return				log likelihood of model
 	 */
-	public void updateInfScope(String vId, double s) {
-		VenueObject vo = venueMap.get(vId);
-		double sqOldvalue = vo.getInfluenceScope() * vo.getInfluenceScope();
-		vo.updateInfluenceScope(s);
-		ArrayList<String> neighbors = venueMap.get(vId).getNeighbors();
-		for (String neighbor : neighbors) {
-			VenueObject nObj = venueMap.get(neighbor);
-			AreaObject ao = areaMap.get(nObj.getAreaId());
-			ao.updateScope(Math.sqrt(ao.getScope() * ao.getScope() - sqOldvalue + s * s));
-		}
-		
-		AreaObject ao = areaMap.get(vo.getAreaId());
-		ao.updateScope(Math.sqrt(ao.getScope() * ao.getScope() - sqOldvalue + s * s));
+	private double intermediateLLH(Map<String, Double> updatedScope, Set<String> validVenues, Set<String> allAreaId) {
+		HashMap<String, VenueObject> intermediateVenueMap = new HashMap<>(venueMap);
+		HashMap<String, AreaObject> intermediateAreaMap = new HashMap<>(areaMap);
+
+		// update the scope of venue
+		validVenues.parallelStream().forEach(venueId -> {
+			VenueObject v = intermediateVenueMap.get(venueId);
+
+			double scope = updatedScope.get(venueId);
+			v.updateInfluenceScope(scope);
+		});
+
+		// update the scope of area
+		allAreaId.parallelStream().forEach(areaId -> {
+			AreaObject a = intermediateAreaMap.get(areaId);
+			Set<String> venues = a.getSetOfVenueIds();
+			if (venues != null) {
+				double new_scope = 0.0;
+				for (String vId : venues) {
+					double vScope = intermediateVenueMap.get(vId).getInfluenceScope();
+					new_scope += vScope * vScope;
+				}
+				// scope of area is the sum of scope of all venues inside
+				a.updateScope(Math.sqrt(new_scope));
+			}
+		});
+
+		return Loglikelihood.calculateLLH(userMap, intermediateVenueMap, intermediateAreaMap, isSigmoid, modeModel);
 	}
-	
+
 	public double calculateLLH() {
 		return Loglikelihood.calculateLLH(userMap, venueMap, areaMap, isSigmoid, modeModel);
 	}
