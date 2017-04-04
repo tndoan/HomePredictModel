@@ -329,35 +329,35 @@ public class Utils {
 		}
 		
 		return venueMap;
-	} 
-	
+	}
+
 	public static ArrayList<String> getNeighborArea(int i, int j, int numLat, int numLng) {
 		ArrayList<String> result = new ArrayList<>();
-		
+
 		if ( i - 1 >= 0)
-			result.add(String.valueOf((i - 1) * numLat + j));
-		
+			result.add(String.valueOf((i - 1) * numLng + j));
+
 		if (j - 1 >= 0)
-			result.add(String.valueOf(i * numLat + j - 1));
-		
-		if (i + 1 < numLat) 
-			result.add(String.valueOf((i + 1) * numLat + j));
-		
+			result.add(String.valueOf(i * numLng + j - 1));
+
+		if (i + 1 < numLat)
+			result.add(String.valueOf((i + 1) * numLng + j));
+
 		if (j + 1 < numLng)
-			result.add(String.valueOf(i * numLat + j + 1));
-		
+			result.add(String.valueOf(i * numLng + j + 1));
+
 		if (i - 1 >= 0 && j + 1 < numLng)
-			result.add(String.valueOf((i - 1) * numLat + j + 1));
-		
-		if (i - 1 > 0 && j - 1 >= 0)
-			result.add(String.valueOf((i - 1) * numLat + j - 1));
-		
+			result.add(String.valueOf((i - 1) * numLng + j + 1));
+
+		if (i - 1 >= 0 && j - 1 >= 0)
+			result.add(String.valueOf((i - 1) * numLng + j - 1));
+
 		if (i + 1 < numLat && j - 1 >= 0)
-			result.add(String.valueOf((i + 1) * numLat + j - 1));
-		
+			result.add(String.valueOf((i + 1) * numLng + j - 1));
+
 		if (i + 1 < numLat && j + 1 < numLng)
-			result.add(String.valueOf((i + 1) * numLat + j + 1));
-		
+			result.add(String.valueOf((i + 1) * numLng + j + 1));
+
 		return result;
 	}
 	
